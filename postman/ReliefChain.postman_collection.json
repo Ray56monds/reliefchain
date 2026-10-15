@@ -1,0 +1,585 @@
+{
+  "info": {
+    "name": "ReliefChain API",
+    "description": "AI-gated PayPal disaster micro-relief for Kampala, Uganda.\n\nSet `baseUrl` (default http://localhost:3001/api), `adminKey` (ADMIN_API_KEY) and `recipientEmail` (a PayPal sandbox personal account). Run folders top to bottom: requests save `reportId`, `orderId` and `transactionId` for later steps.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3001/api"
+    },
+    {
+      "key": "adminKey",
+      "value": "reliefchain-demo-admin"
+    },
+    {
+      "key": "recipientEmail",
+      "value": "sb-buyer@personal.example.com"
+    },
+    {
+      "key": "reportId",
+      "value": ""
+    },
+    {
+      "key": "orderId",
+      "value": ""
+    },
+    {
+      "key": "transactionId",
+      "value": ""
+    }
+  ],
+  "item": [
+    {
+      "name": "System",
+      "item": [
+        {
+          "name": "Health check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Shows which integrations are live: database (firestore|local), AI (openai|heuristic), PayPal (sandbox|live|simulated)."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Neighbourhoods",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/neighbourhoods",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "neighbourhoods"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "1 · Report → AI triage → payout",
+      "item": [
+        {
+          "name": "AI score (dry run)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai/score",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai",
+                "score"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"neighbourhood\": \"Bwaise\",\n  \"disasterType\": \"flood\",\n  \"description\": \"The Nsooba channel burst at 2am and water came into our house up to the waist. The mud wall collapsed, our food and mattresses are destroyed and my mother and children are sleeping at the church.\",\n  \"householdSize\": 7,\n  \"vulnerableMembers\": {\n    \"elderly\": 1,\n    \"children\": 3\n  }\n}"
+            },
+            "description": "Scores a report with GPT-4o without saving or paying. Returns vulnerability_score, priority, recommended_amount_usd, reasoning, fraud_flags, needs."
+          }
+        },
+        {
+          "name": "Submit report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nalwoga Sarah\",\n  \"neighbourhood\": \"Bwaise\",\n  \"disasterType\": \"flood\",\n  \"description\": \"The Nsooba channel burst at 2am and water came into our house up to the waist. The mud wall collapsed, our food and mattresses are destroyed and my mother and children are sleeping at the church.\",\n  \"householdSize\": 7,\n  \"vulnerableMembers\": {\n    \"elderly\": 1,\n    \"children\": 3\n  },\n  \"recipientEmail\": \"{{recipientEmail}}\",\n  \"phone\": \"+256700000000\"\n}"
+            },
+            "description": "Full pipeline: validation → deterministic fraud signals → GPT-4o triage (with photo if sent as a data URL in `photo`) → Firestore → PayPal payout if score > 70 and no fraud flags."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "pm.collectionVariables.set('reportId', j.report.id);",
+                  "pm.test('scored', () => pm.expect(j.report.ai.vulnerability_score).to.be.a('number'));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Report status (public)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{reportId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "{{reportId}}",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Public map feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/reports/public",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "public"
+              ]
+            },
+            "description": "Anonymised — no names, emails or phones."
+          }
+        }
+      ]
+    },
+    {
+      "name": "2 · Donations (PayPal Orders v2)",
+      "item": [
+        {
+          "name": "PayPal client config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/config",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "config"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/create-order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "create-order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"amount\": 25\n}"
+            },
+            "description": "Creates a PayPal order (intent CAPTURE). In sandbox, approve it in the browser via the returned order id before capturing; when PayPal is not configured the order is simulated and can be captured directly."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.collectionVariables.set('orderId', pm.response.json().id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Capture order",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/capture-order",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "capture-order"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"orderId\": \"{{orderId}}\",\n  \"amount\": 25,\n  \"donorName\": \"Postman donor\",\n  \"message\": \"Stay strong, Bwaise!\"\n}"
+            },
+            "description": "Captures the order, credits the relief pool with the amount PayPal confirms, and releases queued payouts. Idempotent per order id."
+          }
+        },
+        {
+          "name": "Relief pool",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/pool",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "pool"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recent donations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/donations/recent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "donations",
+                "recent"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3 · Coordinator (x-admin-key)",
+      "item": [
+        {
+          "name": "List reports",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Report photo",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{reportId}}/photo",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "{{reportId}}",
+                "photo"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Approve flagged report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{reportId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "{{reportId}}",
+                "review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"approve\",\n  \"note\": \"Verified by phone with LC1 chairperson\"\n}"
+            },
+            "description": "Clears fraud flags and re-runs the payout gate (score must still be > 70)."
+          }
+        },
+        {
+          "name": "Reject report",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/reports/{{reportId}}/review",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "reports",
+                "{{reportId}}",
+                "review"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"reject\",\n  \"note\": \"Duplicate of an earlier report\"\n}"
+            }
+          }
+        },
+        {
+          "name": "Trigger payout (PayPal Payouts v1)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/payout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "payout"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"reportId\": \"{{reportId}}\"\n}"
+            },
+            "description": "Runs the AI gate and sends a PayPal payout. 201 = sent, 409 = gate refused (reason in body), 502 = PayPal error."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "if (j.transaction) pm.collectionVariables.set('transactionId', j.transaction.id);"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Refresh payout status",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/payout/{{transactionId}}/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "payout",
+                "{{transactionId}}",
+                "refresh"
+              ]
+            },
+            "description": "Polls GET /v1/payments/payouts/{batch_id} and settles the pool ledger."
+          }
+        },
+        {
+          "name": "Refresh all pending payouts",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/payouts/refresh",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "payouts",
+                "refresh"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Transaction log",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/paypal/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "paypal",
+                "transactions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "AI coordinator briefing",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "x-admin-key",
+                "value": "{{adminKey}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/ai/briefing",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ai",
+                "briefing"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

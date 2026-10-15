@@ -1,0 +1,20 @@
+{
+  "name": "reliefchain",
+  "version": "1.0.0",
+  "private": true,
+  "description": "AI-powered disaster micro-relief for Kampala, Uganda — AI triage + PayPal Payouts",
+  "license": "MIT",
+  "scripts": {
+    "install:all": "npm install && npm --prefix server install && npm --prefix client install",
+    "dev": "concurrently -n api,web -c green,cyan \"npm --prefix server run dev\" \"npm --prefix client run dev\"",
+    "build": "npm --prefix server install && npm --prefix client install --include=dev && npm --prefix client run build",
+    "start": "npm --prefix server start",
+    "seed": "node server/scripts/seed.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "concurrently": "^10.0.6"
+  }
+}
